@@ -57,7 +57,7 @@ def store_question_in_db(question, sql_query, response, persona):
     query = f"INSERT INTO {persona}_questions (question, sql_query) VALUES (%s, %s)"
     try:
         with connection.cursor() as cursor:
-            cursor.execute(query, (question, sql_query, nlr))
+            cursor.execute(query, (question, sql_query, response))
         connection.commit()
     finally:
         connection.close()
