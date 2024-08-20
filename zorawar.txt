@@ -1,0 +1,153 @@
+import streamlit as st
+import pandas as pd
+import pymysql
+import plotly.express as px
+from llama_index.legacy.llms.azure_openai import AzureOpenAI
+
+DB_HOST = "tellmoredb.cd24ogmcy170.us-east-1.rds.amazonaws.com"
+DB_USER = "admin"
+DB_PASS = "2yYKKH8lUzaBvc92JUxW"
+DB_PORT = "3306"
+# DB_NAME = "retail_panopticon"
+DB_NAME = "claires_data"
+CONVO_DB_NAME = "store_questions"
+
+AZURE_OPENAI_KEY = "94173b7e3f284f2c8f8eb1804fa55699"
+AZURE_OPENAI_ENDPOINT = "https://tellmoredemogpt.openai.azure.com/"
+AZURE_OPENAI_ENGINE = "tellmore-demo-gpt35"
+AZURE_OPENAI_MODEL_NAME = "gpt-3.5-turbo-0125"
+AZURE_OPENAI_TYPE = "azure"
+
+llm = AzureOpenAI(
+    model=AZURE_OPENAI_MODEL_NAME,
+    engine=AZURE_OPENAI_ENGINE,
+    api_key=AZURE_OPENAI_KEY,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_type=AZURE_OPENAI_TYPE,
+    api_version="2024-03-01-preview",
+    temperature=0.3,
+)
+
+
+def connect_to_db(db_name):
+    return pymysql.connect(
+        host=DB_HOST,
+        port=int(DB_PORT),
+        user=DB_USER,
+        password=DB_PASS,
+        db=db_name
+    )
+
+
+def execute_query(query, connection):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            getResult = cursor.fetchall()
+            columns = [column[0] for column in cursor.description]
+        return pd.DataFrame(getResult, columns=columns)
+    finally:
+        connection.close()
+
+
+def get_queries_from_db():
+    connection = connect_to_db(CONVO_DB_NAME)
+    query = "SELECT question, sql_query FROM pinned_questions;"
+    df = execute_query(query, connection)
+    questions = {"Select a query": None}
+    questions.update(dict(zip(df['question'], df['sql_query'])))
+    return questions
+
+
+st.set_page_config(layout='wide', initial_sidebar_state='collapsed')
+
+# queries = get_queries_from_db()
+
+queries = {
+    "Select a query": None,
+    "Compare the sales performance across all stores for this year against the previous year": "SELECT DISTINCT STORE_ID, STORE_NAME, SALES_TY, SALES_LY\nFROM claires_data.store_total;",
+}
+
+result = None
+
+col = st.columns((2, 1, 1), gap='medium')
+
+with col[0]:
+    st.markdown("#### North Riverside Park Mall, Store001")
+    st.markdown("#### Store Ops App")
+
+    selected_query = st.selectbox("Select a query", list(queries.keys()))
+    if selected_query and selected_query != "Select a query":
+        query_sql = queries[selected_query]
+        conn = connect_to_db(DB_NAME)
+        result = execute_query(query_sql, conn)
+        language_prompt = f"""
+            following is a business question: {selected_query}\n
+            columns from an enterprise database schema were identified to answer this question\n
+            upon querying the columns, the following SQL data table was returned: {result}\n
+            generate a natural language response explaining the data table that was 
+            returned, with the business question as context\n
+            IT IS IMPORTANT TO EXPLAIN THE TRENDS IN THE DATA WITH RESPECT TO THE QUESTION IN DETAIL\n
+            respond only with the natural language explanation of the data table output, do not explain the 
+            business question or how the columns were selected and queried\n
+        """
+        ans = llm.complete(language_prompt)
+        ans = ans.text
+        st.markdown(ans)
+        st.dataframe(result, height=200)
+
+with col[1]:
+    if result is not None and not result.empty:
+        st.subheader("Visualizations")
+
+        if selected_query == "List the allocation strategies for products with the 30 lowest inventory turnover rates":
+            turnover_by_strategy = result.groupby('Inventory_Allocation_Strategy')[
+                'Inventory_Monthly_Turnover_Rate'].sum().reset_index()
+
+            bar_fig_turnover = px.bar(
+                turnover_by_strategy,
+                x='Inventory_Allocation_Strategy',
+                y='Inventory_Monthly_Turnover_Rate',
+                title='Sum of Inventory Turnover Rates by Allocation Strategy',
+            )
+
+            st.markdown('<div class="plotly-container">', unsafe_allow_html=True)
+            st.plotly_chart(bar_fig_turnover)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        st.write("Please select a query from the dropdown menu.")
+
+with col[2]:
+    if result is not None and not result.empty:
+        st.subheader("")
+
+        if selected_query == "List the allocation strategies for products with the 30 lowest inventory turnover rates":
+            safety_stock_by_strategy = result.groupby('Inventory_Allocation_Strategy')[
+                'Safety_Stock_Levels'].sum().reset_index()
+
+            bar_fig_safety_stock = px.bar(
+                safety_stock_by_strategy,
+                x='Inventory_Allocation_Strategy',
+                y='Safety_Stock_Levels',
+                title='Sum of Safety Stock Levels by Allocation Strategy',
+            )
+
+            bar_fig_turnover.update_layout(
+                autosize=True,
+                title={
+                    'text': """Sum of Inventory Turnover Rates 
+                        by Allocation Strategy""",
+                    'x': 0.5,
+                    'xanchor': 'center',
+                    'yanchor': 'top'
+                },
+                title_font=dict(size=14),
+                margin=dict(l=0, r=0, t=40, b=0)
+            )
+            st.markdown('<div class="plotly-container">', unsafe_allow_html=True)
+            st.plotly_chart(bar_fig_safety_stock)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        pass
