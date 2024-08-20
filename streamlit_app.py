@@ -54,10 +54,11 @@ def execute_query(query, connection):
 
 def store_question_in_db(question, sql_query, response, persona):
     connection = connect_to_db(CONVO_DB_NAME)
-    query = f"INSERT INTO {persona}_questions (question, sql_query, response) VALUES (%s, %s)"
+    query = f"INSERT INTO {persona}_questions (question, sql_query) VALUES (%s, %s)"
     try:
         with connection.cursor() as cursor:
-            cursor.execute(query, (question, sql_query, response))
+            # cursor.execute(query, (question, sql_query, response))
+            cursor.execute(query, (question, sql_query))
         connection.commit()
     finally:
         connection.close()
