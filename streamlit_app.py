@@ -3,6 +3,8 @@ import pandas as pd
 import pymysql
 import plotly.express as px
 import time
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
 DB_HOST = "tellmoredb.cd24ogmcy170.us-east-1.rds.amazonaws.com"
 DB_USER = "admin"
@@ -88,41 +90,157 @@ def set_custom_css():
     st.markdown(custom_css, unsafe_allow_html=True)
 
 
+def create_figures(data, query):
+    if query == "Give a daily breakdown UPT for all product categories for each store during May":
+        pie_fig = px.pie(
+            data,
+            values='UPT',
+            names='Product_Category',
+            title='Sum of UPT by Product Category'
+        )
+
+        bar_fig = px.bar(
+            data,
+            x='UPT',
+            y='Store_ID',
+            orientation='h', 
+            title='Sum of UPT by Store_ID'
+        )
+        bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})  
+
+        filtered_data = data[data['Product_Category'].isin(['Clothing', 'Toys'])]
+        line_fig = px.line(
+            filtered_data,
+            x='Sale_Date',
+            y='UPT',
+            color='Product_Category',
+            title='Product Category Sales report'
+        )
+        line_fig.update_layout(
+            xaxis_title='Sale_Date',
+            yaxis_title='Sum of UPT',
+            legend_title='Product Category'
+        )
+
+        figures = [pie_fig, bar_fig, line_fig]
+        return figures
+
+    if query == "What was the impact of the promotional discounts offered in May on the weekend vs. weekday sales for all product categories?":
+        total_sales_per_category = data.groupby('Category')['total_sales'].sum().reset_index()
+        df = data.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+        fig2 = px.bar(
+            df,
+            y='Category',
+            x='total_sales',
+            color='day_type',
+            title='Total Sales for Each Product Category',
+            labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
+            barmode='group',
+            orientation='h',
+            color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
+        )
+
+        fig3 = px.bar(
+            df,
+            x='Category',
+            y='avg_transaction_value',
+            color='day_type',
+            title='Average Transaction Value for Each Product Category',
+            labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
+            barmode='stack',
+            text_auto=True,
+            color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
+        )
+
+        total_sales_per_category = data.groupby('Category')['total_sales'].sum().reset_index()
+        df = data.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+        df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
+        fig = px.bar(
+            df,
+            x='Category',
+            y='sales_percentage',
+            color='day_type',
+            title='Total Sales Percentage for Each Product Category',
+            labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
+            text_auto=True,
+            barmode='stack'
+        )
+
+        fig1 = px.bar(
+            df,
+            y='Category',
+            x='total_transactions',
+            color='day_type',
+            title='Total Transactions for Each Product Category',
+            labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
+            barmode='group',
+            orientation='h',
+            color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
+        )
+
+        figures = [fig2, fig3, fig, fig1]
+        return figures
+    
+    if query == "Give the total shipments delivered late and the reason for the delay for each product category":
+        fig_pie = px.sunburst(
+                    data,
+                    path=['Category', 'Reason_Late_Shipment'],
+                    values='Total_Late_Shipments',
+                    title='Reasons for Late Shipments by Product Category',
+                    color='Reason_Late_Shipment',
+                    color_discrete_sequence=px.colors.qualitative.Set3  
+                )
+        
+        total_shipments_by_category = data.groupby('Category')['Total_Late_Shipments'].sum().reset_index()
+        fig_bar = px.bar(
+                    total_shipments_by_category,
+                    y='Category',
+                    x='Total_Late_Shipments',
+                    title='Total Late Shipments by Product Category',
+                    labels={'Total_Late_Shipments': 'Total Late Shipments'},
+                    color='Category',
+                    color_discrete_sequence=px.colors.qualitative.Pastel  
+                )
+                
+        figures = [fig_pie, fig_bar]
+        return figures
+
+
+
 def corporate_app(persona, questions_dict):
-    col = st.columns((2, 1, 1), gap='medium')
+    st.markdown("""
+    <style>
+    div.stButton {
+        display: flex;
+        justify-content: flex-end; /* Align button to the right */
+        margin-top: 10px;
+    }
+    """, unsafe_allow_html=True)
+    save_button_pressed = st.button('SAVE', key='save_button')
+
+    if save_button_pressed:
+        if st.session_state.history:
+            last_chat = st.session_state.history[-1]
+            store_question_in_db(last_chat['question'], last_chat['sql'])
+            st.success("Last conversation stored.")
+            st.session_state['user_input'] = ""
+            st.session_state['display_df_and_nlr'] = False
+            st.session_state['last_result'] = None
+            st.session_state['last_nlr'] = None
+        else:
+            st.warning("No conversation to store.")
+
+    st.session_state['user_input'] = st.text_input("Business Question: ", st.session_state['user_input'])
+    col = st.columns((1, 1), gap='medium')
 
     with col[0]:
-        st.markdown("""
-        <style>
-        div.stButton {
-            display: flex;
-            justify-content: flex-end; /* Align button to the right */
-            margin-top: 10px;
-        }
-        """, unsafe_allow_html=True)
-        save_button_pressed = st.button('SAVE', key='save_button')
-
-        if save_button_pressed:
-            if st.session_state.history:
-                last_chat = st.session_state.history[-1]
-                store_question_in_db(last_chat['question'], last_chat['sql'])
-                st.success("Last conversation stored.")
-                st.session_state['user_input'] = ""
-                st.session_state['display_df_and_nlr'] = False
-                st.session_state['last_result'] = None
-                st.session_state['last_nlr'] = None
-            else:
-                st.warning("No conversation to store.")
-
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        st.session_state['user_input'] = st.text_input("Business Question: ", st.session_state['user_input'])
-
         for chat in st.session_state.history:
             st.write(f"**User:** {chat['question']}")
             st.write(f"**Natural Language Response:** {chat['nlr']}")
 
         if st.session_state['user_input'] and not save_button_pressed:
-            if st.session_state['user_input'] in questions_dict.keys() and st.session_state['user_input'] != "Select a query":
+            if st.session_state['user_input'] in questions_dict.keys() and st.session_state[
+                'user_input'] != "Select a query":
                 conn = connect_to_db(DB_NAME)
                 result = execute_query(questions_dict[st.session_state['user_input']]['sql'], conn)
                 st.session_state.history.append({
@@ -141,169 +259,97 @@ def corporate_app(persona, questions_dict):
                     st.write(st.session_state['last_nlr'])
 
     with col[1]:
-        st.subheader("Visualizations")
+
         if st.session_state['display_df_and_nlr'] and not st.session_state['last_result'].empty:
-            if st.session_state['user_input'] == "Give a daily breakdown UPT for all product categories for each store during May":
-                pie_fig = px.pie(
-                    st.session_state['last_result'],
-                    values='UPT',
-                    names='Product_Category',
-                    title='Sum of UPT by Product Category'
-                )
-                st.plotly_chart(pie_fig)
+            if st.session_state[
+                'user_input'] == "Give a daily breakdown UPT for all product categories for each store during May":
+                l_figures = create_figures(st.session_state['last_result'], st.session_state['user_input'])
 
-                time.sleep(1)
+                dynamic_figure_populate(l_figures)
 
-                filtered_data = st.session_state['last_result'][st.session_state['last_result']['Product_Category'].isin(['Clothing', 'Toys'])]
-                line_fig = px.line(
-                    filtered_data,
-                    x='Sale_Date',
-                    y='UPT',
-                    color='Product_Category',
-                    title='Product Category Sales report'
-                )
-                line_fig.update_layout(
-                    xaxis_title='Sale_Date',
-                    yaxis_title='Sum of UPT',
-                    legend_title='Product Category'
-                )
-                st.plotly_chart(line_fig)
+            if st.session_state['user_input'] == "What was the impact of the promotional discounts offered in May on the weekend vs. weekday sales for all product categories?":
+                l_figures = create_figures(st.session_state['last_result'], st.session_state['user_input'])
 
-            elif st.session_state['user_input'] == "What was the impact of the promotional discounts offered in May on the weekend vs. weekday sales for all product categories?":
-                total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                fig2 = px.bar(
-                    df,
-                    y='Category',
-                    x='total_sales',
-                    color='day_type',
-                    title='Total Sales by Day Type for Each Product Category',
-                    labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
-                    barmode='group',
-                    orientation='h',
-                    color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
-                )
-                st.plotly_chart(fig2)
+                dynamic_figure_populate(l_figures)
 
-                fig3 = px.bar(
-                    df,
-                    x='Category',
-                    y='avg_transaction_value',
-                    color='day_type',
-                    title='Average Transaction Value by Day Type for Each Product Category',
-                    labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
-                    barmode='stack',
-                    text_auto=True,
-                    color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
-                )
-                st.plotly_chart(fig3)
+            if st.session_state['user_input'] == "Give the total shipments delivered late and the reason for the delay for each product category":
+                l_figures = create_figures(st.session_state['last_result'], st.session_state['user_input'])
 
-            elif st.session_state['user_input'] == "Give the total shipments delivered late and the reason for the delay for each product category":
-                fig_pie = px.sunburst(
-                    result,
-                    path=['Category', 'Reason_Late_Shipment'],
-                    values='Total_Late_Shipments',
-                    title='Reasons for Late Shipments by Product Category',
-                    color='Reason_Late_Shipment',
-                    color_discrete_sequence=px.colors.qualitative.Set3  # Different colors for each reason
-                )
-                st.plotly_chart(fig_pie)
+                dynamic_figure_populate(l_figures)
 
-    with col[2]:
-        st.write("")
-        if st.session_state['display_df_and_nlr'] and not st.session_state['last_result'].empty:
-            if st.session_state['user_input'] == "Give a daily breakdown UPT for all product categories for each store during May":
-                bar_fig = px.bar(
-                    st.session_state['last_result'],
-                    x='UPT',
-                    y='Store_ID',
-                    orientation='h',  # Horizontal bar chart
-                    title='Sum of UPT by Store_ID'
-                )
-                bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})  # Sort bars by UPT
-                st.plotly_chart(bar_fig)
+            
 
-                time.sleep(1)
+def dynamic_figure_populate(list_of_figs):
+    # Num plots:5
+    # remaining_cols = [2,2,1]
 
-                pie_fig = px.pie(
-                    st.session_state['last_result'],
-                    values='UPT',
-                    names='Product_Category',
-                    title='Sum of UPT by Product Category'
-                )
-                st.plotly_chart(pie_fig)
+    num_plots = len(list_of_figs)
+    num_containers = num_plots // 2 + num_plots % 2
+    print(f"Number of plots:{num_containers}")
+    print(f"Number of containers:{num_containers}")
+    remaining_cols = [2] * (num_plots // 2)
+    if num_plots % 2 == 1:
+        remaining_cols.append(num_plots % 2)
+    print(f"column split:{remaining_cols}")
+    # with streamlit_column:
+    current_idx = 0
+    for i in range(1, num_containers + 1):
+        print(f"i: {i}")
 
-            elif st.session_state['user_input'] == "What was the impact of the promotional discounts offered in May on the weekend vs. weekday sales for all product categories?":
-                total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
-                fig = px.bar(
-                    df,
-                    x='Category',
-                    y='sales_percentage',
-                    color='day_type',
-                    title='Percentage of Total Sales by Day Type for Each Product Category',
-                    labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
-                    text_auto=True,
-                    barmode='stack'
-                )
-                st.plotly_chart(fig)
-
-                fig1 = px.bar(
-                    df,
-                    y='Category',
-                    x='total_transactions',
-                    color='day_type',
-                    title='Total Transactions by Day Type for Each Product Category',
-                    labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
-                    barmode='group',
-                    orientation='h',
-                    color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
-                )
-                st.plotly_chart(fig1)
-
-            elif st.session_state['user_input'] == "Give the total shipments delivered late and the reason for the delay for each product category":
-                total_shipments_by_category = result.groupby('Category')['Total_Late_Shipments'].sum().reset_index()
-                fig_bar = px.bar(
-                    total_shipments_by_category,
-                    y='Category',
-                    x='Total_Late_Shipments',
-                    title='Total Late Shipments by Product Category',
-                    labels={'Total_Late_Shipments': 'Total Late Shipments'},
-                    color='Category',
-                    color_discrete_sequence=px.colors.qualitative.Pastel  # Different color scheme for categories
-                )
-                st.plotly_chart(fig_bar)
+        globals()[f'container_{i}'] = st.container()
+        container = globals()[f'container_{i}']
+        with container:
+            cols = st.columns(remaining_cols[i - 1])
+            for col_idx in range(len(cols)):
+                print(f"current container column index: {col_idx}")
+                with cols[col_idx]:
+                    print(f"current_idx: {current_idx}")
+                    if current_idx == num_plots:
+                        break
+                    st.plotly_chart(list_of_figs[current_idx])
+                    current_idx += 1
+    return
 
 
 def management_app(persona, options):
     queries = get_queries_from_db(persona)
-    col = st.columns((2, 1, 1), gap='medium')
+    
+    st.markdown("""
+            <style>
+            div.stButton {
+                display: flex;
+                justify-content: flex-end; /* Align button to the right */
+                margin-top: 10px;
+            }
+                
+            /* Custom CSS for the dropdowns to align right and be smaller */
+            div.streamlit-expander {
+                width: 100%; /* Make sure it fills the container */
+            }
+
+            div.streamlit-expander > div {
+                width: 30%; /* Set the width of the selectbox */
+                margin-left: auto; /* Push it to the right */
+            }
+            
+            /* Smaller font size for selectbox options */
+            .stSelectbox div {
+                font-size: 12px; /* Smaller font size */
+            }
+
+            </style>
+            """, unsafe_allow_html=True)
+    col1, col2 = st.columns([4, 1])  
+    with col2:
+        drop_down = st.selectbox("", options)
+    unpin_button_pressed = st.button("DELETE", key='unpin_button')
+    selected_query = st.selectbox("Select a query", queries if queries else ["Select a query"])
+
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    col = st.columns((1, 1), gap='medium')
     conn = connect_to_db(DB_NAME)
 
     with col[0]:
-        st.markdown("""
-    <style>
-    div.stButton {
-        display: flex;
-        justify-content: flex-end; /* Align button to the right */
-        margin-top: 10px;
-    }
-
-    div.stButton > button:first-child {
-        border-radius: 50%;
-        background-color: #553D94; /* Button color */
-        color: white;
-        border: none;
-        padding: 10px 15px; /* Adjust size as needed */
-        cursor: pointer;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-        unpin_button_pressed = st.button("DELETE", key='unpin_button')
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        drop_down = st.selectbox("Select", options)
-        selected_query = st.selectbox("Select a query", queries if queries else ["Select a query"])
         if unpin_button_pressed:
             if selected_query != "Select a query":
                 queries.pop(selected_query, None)
@@ -311,7 +357,7 @@ def management_app(persona, options):
             else:
                 st.warning("Select a query to unpin.")
 
-        if drop_down and selected_query and selected_query != "Select a query" and not unpin_button_pressed and drop_down != "Store ID":
+        if drop_down and selected_query and selected_query != "Select a query" and not unpin_button_pressed and drop_down != "SELECT STORE":
             # result = execute_query(queries[selected_query], conn)
             if selected_query == "Give a daily breakdown UPT for all product categories for each store during May":
                 if drop_down == "WATER TOWER PLACE":
@@ -407,383 +453,381 @@ def management_app(persona, options):
                     """)
 
     with col[1]:
-        st.subheader("Visualizations")
         if selected_query and drop_down:
             if selected_query == "Give a daily breakdown UPT for all product categories for each store during May":
                 if drop_down == "WATER TOWER PLACE":
-                    result = execute_query("SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE01' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;", conn)
-
-                    pie_fig = px.pie(
-                        result,
-                        values='UPT',
-                        names='Product_Category',
-                        title='Sum of UPT by Product Category'
-                    )
-                    st.plotly_chart(pie_fig)
-
-                    time.sleep(1)
-
-                    filtered_data = result[result['Product_Category'].isin(['Clothing', 'Toys'])]
-                    line_fig = px.line(
-                        filtered_data,
-                        x='Sale_Date',
-                        y='UPT',
-                        color='Product_Category',
-                        title='Product Category Sales report'
-                    )
-                    line_fig.update_layout(
-                        xaxis_title='Sale_Date',
-                        yaxis_title='Sum of UPT',
-                        legend_title='Product Category'
-                    )
-                    st.plotly_chart(line_fig)
+                    result = execute_query(
+                        "SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE01' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
 
                 elif drop_down == "RIVERFRONT PLAZA":
-                    result = execute_query("SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE28' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;", conn)
-                    pie_fig = px.pie(
-                        result,
-                        values='UPT',
-                        names='Product_Category',
-                        title='Sum of UPT by Product Category'
-                    )
-                    st.plotly_chart(pie_fig)
-
-                    time.sleep(1)
-
-                    filtered_data = result[result['Product_Category'].isin(['Clothing', 'Toys'])]
-                    line_fig = px.line(
-                        filtered_data,
-                        x='Sale_Date',
-                        y='UPT',
-                        color='Product_Category',
-                        title='Product Category Sales report'
-                    )
-                    line_fig.update_layout(
-                        xaxis_title='Sale_Date',
-                        yaxis_title='Sum of UPT',
-                        legend_title='Product Category'
-                    )
-                    st.plotly_chart(line_fig)
+                    result = execute_query(
+                        "SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE28' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
 
                 elif drop_down == "WESTFIELD WHEATON":
-                    result = execute_query("SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE49' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;", conn)
-                    pie_fig = px.pie(
-                        result,
-                        values='UPT',
-                        names='Product_Category',
-                        title='Sum of UPT by Product Category'
-                    )
-                    st.plotly_chart(pie_fig)
-
-                    time.sleep(1)
-
-                    filtered_data = result[result['Product_Category'].isin(['Clothing', 'Toys'])]
-                    line_fig = px.line(
-                        filtered_data,
-                        x='Sale_Date',
-                        y='UPT',
-                        color='Product_Category',
-                        title='Product Category Sales report'
-                    )
-                    line_fig.update_layout(
-                        xaxis_title='Sale_Date',
-                        yaxis_title='Sum of UPT',
-                        legend_title='Product Category'
-                    )
-                    st.plotly_chart(line_fig)
-
+                    result = execute_query(
+                        "SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE49' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
+            
             elif selected_query == "What was the impact of the promotional discounts offered in May on the weekend vs. weekday sales for all product categories?":
                 if drop_down == "WATER TOWER PLACE":
-                    result = execute_query("SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE01' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;", conn)
-
-                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                    fig2 = px.bar(
-                        df,
-                        y='Category',
-                        x='total_sales',
-                        color='day_type',
-                        title='Total Sales by Day Type for Each Product Category',
-                        labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
-                        barmode='group',
-                        orientation='h',
-                        color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
-                    )
-                    st.plotly_chart(fig2)
-
-                    fig3 = px.bar(
-                        df,
-                        x='Category',
-                        y='avg_transaction_value',
-                        color='day_type',
-                        title='Average Transaction Value by Day Type for Each Product Category',
-                        labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
-                        barmode='stack',
-                        text_auto=True,
-                        color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
-                    )
-                    st.plotly_chart(fig3)
+                    result = execute_query(
+                        "SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE01' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
 
                 elif drop_down == "RIVERFRONT PLAZA":
-                    result = execute_query("SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE28' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;", conn)
-                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                    fig2 = px.bar(
-                        df,
-                        y='Category',
-                        x='total_sales',
-                        color='day_type',
-                        title='Total Sales by Day Type for Each Product Category',
-                        labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
-                        barmode='group',
-                        orientation='h',
-                        color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
-                    )
-                    st.plotly_chart(fig2)
-
-                    fig3 = px.bar(
-                        df,
-                        x='Category',
-                        y='avg_transaction_value',
-                        color='day_type',
-                        title='Average Transaction Value by Day Type for Each Product Category',
-                        labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
-                        barmode='stack',
-                        text_auto=True,
-                        color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
-                    )
-                    st.plotly_chart(fig3)
-
+                    result = execute_query(
+                        "SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE28' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
+                
                 elif drop_down == "WESTFIELD WHEATON":
-                    result = execute_query("SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE49' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;", conn)
-                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                    fig2 = px.bar(
-                        df,
-                        y='Category',
-                        x='total_sales',
-                        color='day_type',
-                        title='Total Sales by Day Type for Each Product Category',
-                        labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
-                        barmode='group',
-                        orientation='h',
-                        color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
-                    )
-                    st.plotly_chart(fig2)
-
-                    fig3 = px.bar(
-                        df,
-                        x='Category',
-                        y='avg_transaction_value',
-                        color='day_type',
-                        title='Average Transaction Value by Day Type for Each Product Category',
-                        labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
-                        barmode='stack',
-                        text_auto=True,
-                        color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
-                    )
-                    st.plotly_chart(fig3)
-            elif selected_query == "Give the total shipments delivered late and the reason for the delay for each product category":
-                if drop_down == "WATER TOWER PLACE":
-                    result = execute_query("SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE01' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;", conn)
-                    fig_pie = px.sunburst(
-                        result,
-                        path=['Category', 'Reason_Late_Shipment'],
-                        values='Total_Late_Shipments',
-                        title='Reasons for Late Shipments by Product Category',
-                        color='Reason_Late_Shipment',
-                        color_discrete_sequence=px.colors.qualitative.Set3
-                    )
-                    st.plotly_chart(fig_pie)
-                elif drop_down == "RIVERFRONT PLAZA":
-                    result = execute_query("SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE28' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;", conn)
-                    fig_pie = px.sunburst(
-                        result,
-                        path=['Category', 'Reason_Late_Shipment'],
-                        values='Total_Late_Shipments',
-                        title='Reasons for Late Shipments by Product Category',
-                        color='Reason_Late_Shipment',
-                        color_discrete_sequence=px.colors.qualitative.Set3
-                    )
-                    st.plotly_chart(fig_pie)
-                elif drop_down == "WESTFIELD WHEATON":
-                    result = execute_query("SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE49' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;", conn)
-                    fig_pie = px.sunburst(
-                        result,
-                        path=['Category', 'Reason_Late_Shipment'],
-                        values='Total_Late_Shipments',
-                        title='Reasons for Late Shipments by Product Category',
-                        color='Reason_Late_Shipment',
-                        color_discrete_sequence=px.colors.qualitative.Set3
-                    )
-                    st.plotly_chart(fig_pie)
-
-    with col[2]:
-        st.write("")
-        if selected_query and drop_down:
-            if selected_query == "Give a daily breakdown UPT for all product categories for each store during May":
-                if drop_down == "WATER TOWER PLACE":
-                    result = execute_query("SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE01' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;", conn)
-
-                    bar_fig = px.bar(
-                        result,
-                        x='UPT',
-                        y='Store_ID',
-                        orientation='h',  # Horizontal bar chart
-                        title='Sum of UPT by Store_ID'
-                    )
-                    bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})  # Sort bars by UPT
-                    st.plotly_chart(bar_fig)
-
-                    time.sleep(1)
-
-                    pie_fig = px.pie(
-                        result,
-                        values='UPT',
-                        names='Product_Category',
-                        title='Sum of UPT by Product Category'
-                    )
-                    st.plotly_chart(pie_fig)
-
-                elif drop_down == "RIVERFRONT PLAZA":
-                    result = execute_query("SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE28' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;", conn)
-                    bar_fig = px.bar(
-                        result,
-                        x='UPT',
-                        y='Store_ID',
-                        orientation='h',  # Horizontal bar chart
-                        title='Sum of UPT by Store_ID'
-                    )
-                    bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})  # Sort bars by UPT
-                    st.plotly_chart(bar_fig)
-
-                    time.sleep(1)
-
-                    pie_fig = px.pie(
-                        result,
-                        values='UPT',
-                        names='Product_Category',
-                        title='Sum of UPT by Product Category'
-                    )
-                    st.plotly_chart(pie_fig)
-
-                elif drop_down == "WESTFIELD WHEATON":
-                    result = execute_query("SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE49' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;", conn)
-                    bar_fig = px.bar(
-                        result,
-                        x='UPT',
-                        y='Store_ID',
-                        orientation='h',  # Horizontal bar chart
-                        title='Sum of UPT by Store_ID'
-                    )
-                    bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})  # Sort bars by UPT
-                    st.plotly_chart(bar_fig)
-
-                    time.sleep(1)
-
-                    pie_fig = px.pie(
-                        result,
-                        values='UPT',
-                        names='Product_Category',
-                        title='Sum of UPT by Product Category'
-                    )
-                    st.plotly_chart(pie_fig)
-
-            elif selected_query == "What was the impact of the promotional discounts offered in May on the weekend vs. weekday sales for all product categories?":
-                if drop_down == "WATER TOWER PLACE":
-                    result = execute_query("SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE01' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;", conn)
-
-                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                    df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
-                    fig = px.bar(
-                        df,
-                        x='Category',
-                        y='sales_percentage',
-                        color='day_type',
-                        title='Percentage of Total Sales by Day Type for Each Product Category',
-                        labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
-                        text_auto=True,
-                        barmode='stack'
-                    )
-                    st.plotly_chart(fig)
-
-                    fig1 = px.bar(
-                        df,
-                        y='Category',
-                        x='total_transactions',
-                        color='day_type',
-                        title='Total Transactions by Day Type for Each Product Category',
-                        labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
-                        barmode='group',
-                        orientation='h',
-                        color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
-                    )
-                    st.plotly_chart(fig1)
-
-                elif drop_down == "RIVERFRONT PLAZA":
-                    result = execute_query("SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE28' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;", conn)
-                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                    df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
-                    fig = px.bar(
-                        df,
-                        x='Category',
-                        y='sales_percentage',
-                        color='day_type',
-                        title='Percentage of Total Sales by Day Type for Each Product Category',
-                        labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
-                        text_auto=True,
-                        barmode='stack'
-                    )
-                    st.plotly_chart(fig)
-
-                    fig1 = px.bar(
-                        df,
-                        y='Category',
-                        x='total_transactions',
-                        color='day_type',
-                        title='Total Transactions by Day Type for Each Product Category',
-                        labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
-                        barmode='group',
-                        orientation='h',
-                        color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
-                    )
-                    st.plotly_chart(fig1)
-
-                elif drop_down == "WESTFIELD WHEATON":
-                    result = execute_query("SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE49' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;", conn)
-                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
-                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
-                    df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
-                    fig = px.bar(
-                        df,
-                        x='Category',
-                        y='sales_percentage',
-                        color='day_type',
-                        title='Percentage of Total Sales by Day Type for Each Product Category',
-                        labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
-                        text_auto=True,
-                        barmode='stack'
-                    )
-                    st.plotly_chart(fig)
-
-                    fig1 = px.bar(
-                        df,
-                        y='Category',
-                        x='total_transactions',
-                        color='day_type',
-                        title='Total Transactions by Day Type for Each Product Category',
-                        labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
-                        barmode='group',
-                        orientation='h',
-                        color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
-                    )
-                    st.plotly_chart(fig1)
+                    result = execute_query(
+                        "SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE49' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
 
             elif selected_query == "Give the total shipments delivered late and the reason for the delay for each product category":
                 if drop_down == "WATER TOWER PLACE":
-                    result = execute_query("SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE01' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;", conn)
+                    result = execute_query(
+                        "SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE01' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
+
+                elif drop_down == "RIVERFRONT PLAZA":
+                    result = execute_query(
+                        "SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE28' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
+
+                elif drop_down == "WESTFIELD WHEATON":
+                    result = execute_query(
+                        "SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE49' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;",
+                        conn)
+                    l_figures = create_figures2(selected_query, drop_down)
+                    dynamic_figure_populate(l_figures)
+
+
+def create_figures2(query, drop):
+    conn = connect_to_db(DB_NAME)
+    if query and drop:
+            if query == "Give a daily breakdown UPT for all product categories for each store during May":
+                if drop == "WATER TOWER PLACE":
+                    result = execute_query(
+                        "SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE01' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;",
+                        conn)
+
+                    pie_fig = px.pie(
+                        result,
+                        values='UPT',
+                        names='Product_Category',
+                        title='Sum of UPT by Product Category'
+                    )
+
+                    filtered_data = result[result['Product_Category'].isin(['Clothing', 'Toys'])]
+                    line_fig = px.line(
+                        filtered_data,
+                        x='Sale_Date',
+                        y='UPT',
+                        color='Product_Category',
+                        title='Product Category Sales report'
+                    )
+                    line_fig.update_layout(
+                        xaxis_title='Sale_Date',
+                        yaxis_title='Sum of UPT',
+                        legend_title='Product Category'
+                    )
+
+                    bar_fig = px.bar(
+                        result,
+                        x='UPT',
+                        y='Store_ID',
+                        orientation='h',  
+                        title='Sum of UPT by Store_ID'
+                    )
+                    bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+
+                    figures = [pie_fig, bar_fig, line_fig]
+                    return figures
+
+
+
+                elif drop == "RIVERFRONT PLAZA":
+                    result = execute_query(
+                        "SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE28' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;",
+                        conn)
+                    pie_fig = px.pie(
+                        result,
+                        values='UPT',
+                        names='Product_Category',
+                        title='Sum of UPT by Product Category'
+                    )
+
+                    filtered_data = result[result['Product_Category'].isin(['Clothing', 'Toys'])]
+                    line_fig = px.line(
+                        filtered_data,
+                        x='Sale_Date',
+                        y='UPT',
+                        color='Product_Category',
+                        title='Product Category Sales report'
+                    )
+                    line_fig.update_layout(
+                        xaxis_title='Sale_Date',
+                        yaxis_title='Sum of UPT',
+                        legend_title='Product Category'
+                    )
+
+                    bar_fig = px.bar(
+                        result,
+                        x='UPT',
+                        y='Store_ID',
+                        orientation='h',  
+                        title='Sum of UPT by Store_ID'
+                    )
+                    bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+
+                    figures = [pie_fig, bar_fig, line_fig]
+                    return figures
+
+                elif drop == "WESTFIELD WHEATON":
+                    result = execute_query(
+                        "SELECT DATE(t.Date) AS Sale_Date, p.Category AS Product_Category, t.Store_ID, ROUND(SUM(t.Quantity) / COUNT(t.Transaction_ID), 2) AS UPT\nFROM retail_panopticon.transactions t\nJOIN retail_panopticon.productInformation p ON t.Product_ID = p.Product_ID\nWHERE t.Store_ID = 'STORE49' AND  t.Date BETWEEN '2024-05-01' AND '2024-05-31'\nGROUP BY DATE(t.Date), p.Category\nORDER BY DATE(t.Date), p.Category;",
+                        conn)
+                    pie_fig = px.pie(
+                        result,
+                        values='UPT',
+                        names='Product_Category',
+                        title='Sum of UPT by Product Category'
+                    )
+
+                    filtered_data = result[result['Product_Category'].isin(['Clothing', 'Toys'])]
+                    line_fig = px.line(
+                        filtered_data,
+                        x='Sale_Date',
+                        y='UPT',
+                        color='Product_Category',
+                        title='Product Category Sales report'
+                    )
+                    line_fig.update_layout(
+                        xaxis_title='Sale_Date',
+                        yaxis_title='Sum of UPT',
+                        legend_title='Product Category'
+                    )
+
+                    bar_fig = px.bar(
+                        result,
+                        x='UPT',
+                        y='Store_ID',
+                        orientation='h',  
+                        title='Sum of UPT by Store_ID'
+                    )
+                    bar_fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+
+                    figures = [pie_fig, bar_fig, line_fig]
+                    return figures
+                
+            elif query == "What was the impact of the promotional discounts offered in May on the weekend vs. weekday sales for all product categories?":
+                if drop == "WATER TOWER PLACE":
+                    result = execute_query(
+                        "SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE01' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;",
+                        conn)
+
+                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
+                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+                    fig2 = px.bar(
+                        df,
+                        y='Category',
+                        x='total_sales',
+                        color='day_type',
+                        title='Total Sales for Each Product Category',
+                        labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
+                        barmode='group',
+                        orientation='h',
+                        color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
+                    )
+
+                    fig3 = px.bar(
+                        df,
+                        x='Category',
+                        y='avg_transaction_value',
+                        color='day_type',
+                        title='Average Transaction Value for Each Category',
+                        labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
+                        barmode='stack',
+                        text_auto=True,
+                        color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
+                    )
+
+                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
+                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+                    df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
+                    fig = px.bar(
+                        df,
+                        x='Category',
+                        y='sales_percentage',
+                        color='day_type',
+                        title='Total Sales Percentage for Each Product Category',
+                        labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
+                        text_auto=True,
+                        barmode='stack'
+                    )
+
+                    fig1 = px.bar(
+                        df,
+                        y='Category',
+                        x='total_transactions',
+                        color='day_type',
+                        title='Total Transactions for Each Product Category',
+                        labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
+                        barmode='group',
+                        orientation='h',
+                        color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
+                    )
+                    figures = [fig2, fig3, fig, fig1]
+                    return figures
+
+                elif drop == "RIVERFRONT PLAZA":
+                    result = execute_query(
+                        "SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE28' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;",
+                        conn)
+                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
+                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+                    fig2 = px.bar(
+                        df,
+                        y='Category',
+                        x='total_sales',
+                        color='day_type',
+                        title='Total Sales for Each Product Category',
+                        labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
+                        barmode='group',
+                        orientation='h',
+                        color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
+                    )
+
+                    fig3 = px.bar(
+                        df,
+                        x='Category',
+                        y='avg_transaction_value',
+                        color='day_type',
+                        title='Average Transaction Value for Each Category',
+                        labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
+                        barmode='stack',
+                        text_auto=True,
+                        color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
+                    )
+
+                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
+                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+                    df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
+                    fig = px.bar(
+                        df,
+                        x='Category',
+                        y='sales_percentage',
+                        color='day_type',
+                        title='Total Sales Percentage for Each Product Category',
+                        labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
+                        text_auto=True,
+                        barmode='stack'
+                    )
+
+                    fig1 = px.bar(
+                        df,
+                        y='Category',
+                        x='total_transactions',
+                        color='day_type',
+                        title='Total Transactions for Each Product Category',
+                        labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
+                        barmode='group',
+                        orientation='h',
+                        color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
+                    )
+                    figures = [fig2, fig3, fig, fig1]
+                    return figures
+                
+                elif drop == "WESTFIELD WHEATON":
+                    result = execute_query(
+                        "SELECT CASE WHEN DAYOFWEEK(S.date) IN (1, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type, P.Category,SUM(S.Total_Amount) AS total_sales, COUNT(DISTINCT S.Transaction_ID) AS total_transactions, AVG(S.Total_Amount) AS avg_transaction_value FROM transactions S JOIN productInformation P ON S.Product_ID = P.Product_ID WHERE S.Store_ID = 'STORE49' AND DATE_FORMAT(S.date, '%Y-%m') = '2024-05' GROUP BY day_type, P.Category ORDER BY day_type DESC, total_sales DESC;",
+                        conn)
+                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
+                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+                    fig2 = px.bar(
+                        df,
+                        y='Category',
+                        x='total_sales',
+                        color='day_type',
+                        title='Total Sales for Each Product Category',
+                        labels={'total_sales': 'Total Sales', 'Category': 'Product Category'},
+                        barmode='group',
+                        orientation='h',
+                        color_discrete_map={'Weekday': 'goldenrod', 'Weekend': 'dodgerblue'}
+                    )
+
+                    fig3 = px.bar(
+                        df,
+                        x='Category',
+                        y='avg_transaction_value',
+                        color='day_type',
+                        title='Average Transaction Value for Each Category',
+                        labels={'avg_transaction_value': 'Average Transaction Value', 'Category': 'Product Category'},
+                        barmode='stack',
+                        text_auto=True,
+                        color_discrete_map={'Weekday': 'orange', 'Weekend': 'purple'}
+                    )
+
+                    total_sales_per_category = result.groupby('Category')['total_sales'].sum().reset_index()
+                    df = result.merge(total_sales_per_category, on='Category', suffixes=('', '_total'))
+                    df['sales_percentage'] = df['total_sales'] / df['total_sales_total'] * 100
+                    fig = px.bar(
+                        df,
+                        x='Category',
+                        y='sales_percentage',
+                        color='day_type',
+                        title='Total Sales Percentage for Each Product Category',
+                        labels={'sales_percentage': 'Percentage of Total Sales', 'Category': 'Product Category'},
+                        text_auto=True,
+                        barmode='stack'
+                    )
+
+                    fig1 = px.bar(
+                        df,
+                        y='Category',
+                        x='total_transactions',
+                        color='day_type',
+                        title='Total Transactions for Each Product Category',
+                        labels={'total_transactions': 'Total Transactions', 'Category': 'Product Category'},
+                        barmode='group',
+                        orientation='h',
+                        color_discrete_map={'Weekday': 'mediumseagreen', 'Weekend': 'tomato'}
+                    )
+                    figures = [fig2, fig3, fig, fig1]
+                    return figures
+                
+            elif query == "Give the total shipments delivered late and the reason for the delay for each product category":
+                if drop == "WATER TOWER PLACE":
+                    result = execute_query(
+                        "SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE01' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;",
+                        conn)
+                    fig_pie = px.sunburst(
+                        result,
+                        path=['Category', 'Reason_Late_Shipment'],
+                        values='Total_Late_Shipments',
+                        title='Reasons for Late Shipments by Product Category',
+                        color='Reason_Late_Shipment',
+                        color_discrete_sequence=px.colors.qualitative.Set3
+                    )
 
                     total_shipments_by_category = result.groupby('Category')['Total_Late_Shipments'].sum().reset_index()
                     fig_bar = px.bar(
@@ -795,9 +839,22 @@ def management_app(persona, options):
                         color='Category',
                         color_discrete_sequence=px.colors.qualitative.Pastel
                     )
-                    st.plotly_chart(fig_bar)
-                elif drop_down == "RIVERFRONT PLAZA":
-                    result = execute_query("SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE28' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;", conn)
+                    figures = [fig_pie, fig_bar]
+                    return figures
+
+                elif drop == "RIVERFRONT PLAZA":
+                    result = execute_query(
+                        "SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE28' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;",
+                        conn)
+                    fig_pie = px.sunburst(
+                        result,
+                        path=['Category', 'Reason_Late_Shipment'],
+                        values='Total_Late_Shipments',
+                        title='Reasons for Late Shipments by Product Category',
+                        color='Reason_Late_Shipment',
+                        color_discrete_sequence=px.colors.qualitative.Set3
+                    )
+
                     total_shipments_by_category = result.groupby('Category')['Total_Late_Shipments'].sum().reset_index()
                     fig_bar = px.bar(
                         total_shipments_by_category,
@@ -808,9 +865,22 @@ def management_app(persona, options):
                         color='Category',
                         color_discrete_sequence=px.colors.qualitative.Pastel
                     )
-                    st.plotly_chart(fig_bar)
-                elif drop_down == "WESTFIELD WHEATON":
-                    result = execute_query("SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE49' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;", conn)
+                    figures = [fig_pie, fig_bar]
+                    return figures
+                
+                elif drop == "WESTFIELD WHEATON":
+                    result = execute_query(
+                        "SELECT t.Store_ID, p.Category,s.Reason_Late_Shipment, COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) AS Total_Late_Shipments FROM transactions t JOIN productInformation p ON t.Product_ID = p.Product_ID JOIN shipmentPerformance s ON t.Transaction_ID = s.Transaction_ID WHERE t.Store_ID = 'STORE49' GROUP BY p.Category, s.Reason_Late_Shipment HAVING COUNT(CASE WHEN s.Late_Shipment_Rate > 0 THEN t.Transaction_ID END) > 0 ORDER BY Total_Late_Shipments DESC;",
+                        conn)
+                    fig_pie = px.sunburst(
+                        result,
+                        path=['Category', 'Reason_Late_Shipment'],
+                        values='Total_Late_Shipments',
+                        title='Reasons for Late Shipments by Product Category',
+                        color='Reason_Late_Shipment',
+                        color_discrete_sequence=px.colors.qualitative.Set3
+                    )
+
                     total_shipments_by_category = result.groupby('Category')['Total_Late_Shipments'].sum().reset_index()
                     fig_bar = px.bar(
                         total_shipments_by_category,
@@ -821,7 +891,10 @@ def management_app(persona, options):
                         color='Category',
                         color_discrete_sequence=px.colors.qualitative.Pastel
                     )
-                    st.plotly_chart(fig_bar)
+                    figures = [fig_pie, fig_bar]
+                    return figures
+
+
 
 
 st.set_page_config(layout='wide', initial_sidebar_state='collapsed')
@@ -853,8 +926,9 @@ else:
         ops_selection = st.sidebar.radio("Toggle View", ["MARKETING OPS", "MARKETING MANAGEMENT"])
 
     elif selected_option == "STORE OPS":
+        
         selected_persona = "store"
-        ops_selection = st.sidebar.radio("Toggle View", ["STORE OPS", "STORE MANAGEMENT"])
+        ops_selection = st.sidebar.radio("Toggle View", ["STORE OPS", "SIMULATE STORE MANAGER"])
         if ops_selection == "STORE OPS":
             store_questions = {
                 "Give a daily breakdown UPT for all product categories for each store during May":
@@ -876,16 +950,18 @@ else:
             st.title("STORE OPS")
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
             corporate_app(selected_persona, store_questions)
-        elif ops_selection == "STORE MANAGEMENT":
+        elif ops_selection == "SIMULATE STORE MANAGER":
             stores = [
-                "Store ID",
+                "SELECT STORE",
                 "WATER TOWER PLACE",
                 "RIVERFRONT PLAZA",
                 "WESTFIELD WHEATON"
             ]
-            st.title("STORE MANAGEMENT")
+            st.title("SIMULATE STORE MANAGER")
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
             management_app(selected_persona, stores)
+
+            
 
     elif selected_option == "MERCHANDISING OPS":
         st.title("MERCHANDISING OPS")
